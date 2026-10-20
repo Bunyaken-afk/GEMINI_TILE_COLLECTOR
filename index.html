@@ -237,8 +237,13 @@
           <div class="text-xs bg-gray-900 text-gray-300 border border-gray-800 px-4 py-2 rounded-lg whitespace-nowrap">
             表示種類数: <span id="col-total-types" class="text-blue-400 font-bold">0</span> 種類
           </div>
+          <button id="btn-calc-all-prob" onclick="calculateAllPossibilityProbabilities()" class="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-lg whitespace-nowrap">
+            全可能性から確率計算
+          </button>
         </div>
       </div>
+
+      <div id="col-prob-status" class="hidden mb-4 p-3 rounded-lg border border-gray-700 bg-gray-900 text-xs text-gray-300"></div>
 
       <!-- Collection Grid -->
       <div id="collection-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -900,7 +905,162 @@
     };
 
     /* ==========================================================================
-       6. COLLECTION GALLERY TAB RENDER
+       6. EXACT PROBABILITY OVER ALL POSSIBLE GROWTH PATHS
+       ========================================================================== */
+    // Percentage rounded to exactly five digits after the decimal point.
+    // Uses integer arithmetic so display rounding does not depend on floating point.
+    function fractionToPercent5(frac) {
+      if (!frac || frac.den === 0n) return "計算不可";
+      const negative = frac.num < 0n;
+      const n = negative ? -frac.num : frac.num;
+      const scaled = n * 100n * 100000n;
+      let q = scaled / frac.den;
+      const r = scaled % frac.den;
+      if (r * 2n >= frac.den) q += 1n;
+      const whole = q / 100000n;
+      const decimal = (q % 100000n).toString().padStart(5, "0");
+      return (negative ? "-" : "") + whole.toString() + "." + decimal + "%";
+    }
+
+    function showCollectionProbabilityStatus(message, isError = false) {
+      const el = document.getElementById("col-prob-status");
+      el.classList.remove("hidden");
+      el.className = "mb-4 p-3 rounded-lg border text-xs " +
+        (isError ? "border-red-800 bg-red-950/40 text-red-300" :
+                   "border-emerald-800 bg-emerald-950/30 text-emerald-200");
+      el.textContent = message;
+    }
+
+    function addFractionToMap(map, key, shape, probability) {
+      const existing = map.get(key);
+      if (existing) {
+        existing.prob = existing.prob.add(probability);
+      } else {
+        map.set(key, {
+          shape: JSON.parse(JSON.stringify(shape)),
+          prob: probability
+        });
+      }
+    }
+
+    function calculateAllPossibilityProbabilities() {
+      const button = document.getElementById("btn-calc-all-prob");
+      const selectedFilterMode = document.getElementById("col-filter-mode").value;
+      const entries = Array.from(collectionMap.values()).filter(entry =>
+        selectedFilterMode === "all" || entry.mode === selectedFilterMode
+      );
+
+      if (entries.length === 0) {
+        showCollectionProbabilityStatus("計算対象のコレクションがありません。先にシミュレーションで図形を生成してください。", true);
+        return;
+      }
+
+      // A distribution is calculated independently for each tile type + mode + attachment rule.
+      // It is exact dynamic programming over every reachable canonical state, not Monte Carlo sampling.
+      const jobsMap = new Map();
+      for (const entry of entries) {
+        const attachLatest = document.getElementById("attach-latest-only").checked;
+        const jobKey = [entry.type, entry.mode, attachLatest ? "latest" : "all"].join("|");
+        if (!jobsMap.has(jobKey)) {
+          jobsMap.set(jobKey, {
+            type: entry.type,
+            mode: entry.mode,
+            attachLatest,
+            maxSize: 1,
+            entries: []
+          });
+        }
+        const job = jobsMap.get(jobKey);
+        job.maxSize = Math.max(job.maxSize, entry.shape.length);
+        job.entries.push(entry);
+      }
+
+      button.disabled = true;
+      button.classList.add("opacity-50", "cursor-wait");
+      showCollectionProbabilityStatus("全可能性を列挙して厳密計算しています。図形数によっては時間がかかります…");
+
+      // Yield once so the status message becomes visible before computation starts.
+      setTimeout(() => {
+        try {
+          const STATE_LIMIT_PER_STEP = 100000;
+          const savedShape = currentShape;
+          const savedTileType = document.getElementById("tile-type").value;
+          const savedMode = document.getElementById("mode-type").value;
+          const savedAttach = document.getElementById("attach-latest-only").checked;
+          let totalProcessed = 0;
+          let completedJobs = 0;
+
+          try {
+            for (const job of jobsMap.values()) {
+              document.getElementById("tile-type").value = job.type;
+              document.getElementById("mode-type").value = job.mode;
+              document.getElementById("attach-latest-only").checked = job.attachLatest;
+
+              let layer = new Map();
+              const initialShape = [{ x: 0, y: 0, z: 0 }];
+              const initialKey = getCanonicalKey(initialShape, job.type, job.mode);
+              layer.set(initialKey, { shape: initialShape, prob: new Fraction(1n, 1n) });
+              const distributions = new Map([[1, layer]]);
+
+              for (let size = 1; size < job.maxSize; size++) {
+                const nextLayer = new Map();
+                for (const state of layer.values()) {
+                  currentShape = state.shape;
+                  const branches = getGroupedBranches();
+                  for (const branch of branches) {
+                    const pathProb = state.prob.mul(branch.prob);
+                    addFractionToMap(nextLayer, branch.canonicalKey, branch.shape, pathProb);
+                  }
+                  totalProcessed++;
+                }
+
+                if (nextLayer.size > STATE_LIMIT_PER_STEP) {
+                  throw new Error(
+                    `${job.type} / ${job.mode} の ${size + 1} タイル目で状態数が ${nextLayer.size.toLocaleString()} 件になりました。` +
+                    `安全上限 ${STATE_LIMIT_PER_STEP.toLocaleString()} 件を超えたため、この計算条件では厳密確率を出せません。` +
+                    `ステップ数を減らすか、タイル種類・モードを絞ってください。`
+                  );
+                }
+                layer = nextLayer;
+                distributions.set(size + 1, layer);
+                if (layer.size === 0) break;
+              }
+
+              for (const entry of job.entries) {
+                const distribution = distributions.get(entry.shape.length);
+                entry.allPossibilityProb = distribution && distribution.has(entry.key)
+                  ? distribution.get(entry.key).prob
+                  : new Fraction(0n, 1n);
+              }
+              completedJobs++;
+            }
+          } finally {
+            currentShape = savedShape;
+            document.getElementById("tile-type").value = savedTileType;
+            document.getElementById("mode-type").value = savedMode;
+            document.getElementById("attach-latest-only").checked = savedAttach;
+          }
+
+          renderCollectionTab();
+          showCollectionProbabilityStatus(
+            `計算完了：${entries.length} 種類を全可能性から厳密計算しました（処理状態数 ${totalProcessed.toLocaleString()}）。` +
+            `表示値は百分率・小数点以下5桁です。対象は現在のタイル追加ルールと、各カードのタイル種類・同型判定モードです。`
+          );
+        } catch (error) {
+          console.error("全可能性確率計算エラー:", error);
+          showCollectionProbabilityStatus(
+            "計算を完了できませんでした。 " + (error && error.message ? error.message : String(error)),
+            true
+          );
+        } finally {
+          button.disabled = false;
+          button.classList.remove("opacity-50", "cursor-wait");
+        }
+      }, 20);
+    }
+
+    /* ==========================================================================
+       7. COLLECTION GALLERY TAB RENDER
        ========================================================================== */
     function renderCollectionTab() {
       const container = document.getElementById('collection-grid');
@@ -955,8 +1115,15 @@
               <span class="text-blue-300 font-semibold truncate max-w-[120px]" title="${entry.prob.toString()}">${entry.prob.toString()}</span>
             </div>
             <div class="flex justify-between">
-              <span class="text-gray-500">10位精度:</span>
+              <span class="text-gray-500">10位精度 (今回の経路):</span>
               <span class="text-emerald-400 text-[10px] truncate max-w-[120px]" title="${entry.prob.toDecimalString10()}">${entry.prob.toDecimalString10()}</span>
+            </div>
+            <div class="mt-2 pt-2 border-t border-gray-800">
+              <div class="flex justify-between items-start gap-2">
+                <span class="text-gray-400">全可能性での出現確率 (分数):</span>
+                <span class="text-fuchsia-300 font-bold text-right break-all" title="${entry.allPossibilityProb ? entry.allPossibilityProb.toString() : "未計算"}">${entry.allPossibilityProb ? entry.allPossibilityProb.toString() : "未計算"}</span>
+              </div>
+              <div class="text-[10px] text-gray-500 mt-1">既約分数で表示。同じタイル数・種類・モードの全成長経路を合算</div>
             </div>
           </div>
         `;
