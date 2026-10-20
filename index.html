@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tile Growth Simulator & Collector</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js for 3D Renderings -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- OrbitControls for Three.js camera interaction -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    /* Custom Scrollbar for sidebars and panels */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #1f2937;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #374151;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #4b5563;
+    }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 flex flex-col h-screen overflow-hidden">
+
+  <!-- Header & Tabs -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between shadow-md shrink-0">
+    <div class="flex items-center space-x-3">
+      <div class="p-2 bg-blue-600 rounded-lg text-white">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+      </div>
+      <h1 class="text-lg font-bold tracking-wide text-white">タイル成長シミュレーター & コレクション</h1>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex bg-gray-800 p-1 rounded-lg border border-gray-700">
+      <button id="tab-btn-sim" onclick="switchTab('sim')" class="px-5 py-2 text-sm font-semibold rounded-md transition-all duration-200 bg-blue-600 text-white shadow">
+        シミュレーション
+      </button>
+      <button id="tab-btn-col" onclick="switchTab('col')" class="px-5 py-2 text-sm font-semibold rounded-md transition-all duration-200 text-gray-400 hover:text-white">
+        コレクション (<span id="col-count-badge">0</span>)
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Work Area -->
+  <main class="flex-1 relative flex overflow-hidden">
+
+    <!-- TAB 1: SIMULATION -->
+    <div id="tab-sim" class="flex w-full h-full">
+      <!-- Left Controls Panel -->
+      <aside class="w-80 bg-gray-900 border-r border-gray-800 p-5 flex flex-col space-y-5 overflow-y-auto shrink-0 shadow-lg">
+        
+        <div class="space-y-4">
+          <h2 class="text-xs font-bold uppercase tracking-wider text-blue-400 border-b border-gray-800 pb-2">設定パラメーター</h2>
+
+          <!-- Tile Type Select -->
+          <div>
+            <label for="tile-type" class="block text-xs font-semibold text-gray-400 mb-1">タイルの種類</label>
+            <select id="tile-type" onchange="onSettingChanged()" class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              <optgroup label="2D タイル">
+                <option value="tri">3角 (正三角形)</option>
+                <option value="square" selected>4角 (正方形)</option>
+                <option value="square-diag">4角斜めあり (8方向)</option>
+                <option value="hex">6角 (正六角形)</option>
+              </optgroup>
+              <optgroup label="3D タイル (立体)">
+                <option value="tetra">4面体 (3D Lattice)</option>
+                <option value="cube">6面体 (立方体 3D)</option>
+                <option value="cube-diag">6面体斜めあり (26方向 3D)</option>
+                <option value="cube-diag-ud">6面体斜め上下あり (3D)</option>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- Mode Select -->
+          <div>
+            <label for="mode-type" class="block text-xs font-semibold text-gray-400 mb-1">モード (同型判定ルール)</label>
+            <select id="mode-type" onchange="onSettingChanged()" class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              <option value="m1" selected>モード1: 全同一 (鏡/回転/生成順を無視)</option>
+              <option value="m2">モード2: 鏡合わせの図形は別</option>
+              <option value="m3">モード3: 鏡合わせ/回転ありは別</option>
+              <option value="m4">モード4: 鏡/回転/生成順すべて別</option>
+            </select>
+          </div>
+
+          <!-- Attach Rule Toggle -->
+          <div>
+            <label class="block text-xs font-semibold text-gray-400 mb-1">タイル追加ルール</label>
+            <div class="flex items-center justify-between bg-gray-800 p-2.5 rounded-md border border-gray-700">
+              <span class="text-xs text-gray-300">直近のタイルの隣のみ</span>
+              <input type="checkbox" id="attach-latest-only" checked onchange="onSettingChanged()" class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500">
+            </div>
+          </div>
+
+          <!-- Max Steps -->
+          <div>
+            <label for="max-steps" class="block text-xs font-semibold text-gray-400 mb-1">繰り返す回数 (目標ステップ数)</label>
+            <input type="number" id="max-steps" min="1" max="100" value="10" onchange="onSettingChanged()" class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-md p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          </div>
+
+          <!-- Step Interval (Seconds) -->
+          <div>
+            <div class="flex justify-between items-center mb-1">
+              <label for="step-interval" class="text-xs font-semibold text-gray-400">ステップ間隔 (秒)</label>
+              <span id="interval-val-label" class="text-xs font-mono text-blue-400 font-bold">1.0s</span>
+            </div>
+            <input type="range" id="step-interval" min="0.1" max="5.0" step="0.1" value="1.0" oninput="onIntervalChanged(this.value)" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+          </div>
+        </div>
+
+        <!-- Action Controls -->
+        <div class="pt-2 border-t border-gray-800 flex flex-col space-y-2">
+          <button id="btn-start" onclick="toggleStart()" class="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg shadow-md transition duration-150 flex items-center justify-center space-x-2">
+            <svg id="icon-play" class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
+            <span id="label-start">スタート (1.0秒ごと)</span>
+          </button>
+
+          <div class="flex space-x-2">
+            <button onclick="stepOnce()" id="btn-step" class="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 text-xs font-semibold rounded-md transition duration-150">
+              +1ステップ
+            </button>
+            <button onclick="resetSim()" class="flex-1 py-2 bg-gray-800 hover:bg-gray-700 text-red-400 border border-gray-700 text-xs font-semibold rounded-md transition duration-150">
+              リセット
+            </button>
+          </div>
+        </div>
+
+        <!-- System Controls -->
+        <div class="mt-auto pt-4 border-t border-gray-800 space-y-2">
+          <button onclick="clearCollection()" class="w-full py-2 bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-800/50 text-xs font-semibold rounded-md transition duration-150">
+            コレクション初期化
+          </button>
+        </div>
+
+      </aside>
+
+      <!-- Center Viewport -->
+      <div class="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+        
+        <!-- 2D Canvas -->
+        <canvas id="canvas-2d" class="w-full h-full block cursor-grab active:cursor-grabbing"></canvas>
+        
+        <!-- 3D Container -->
+        <div id="container-3d" class="w-full h-full absolute inset-0 hidden"></div>
+
+        <!-- Floating View Controls Overlay -->
+        <div class="absolute top-4 left-4 bg-gray-900/80 backdrop-blur-md border border-gray-800 px-3 py-1.5 rounded-md text-xs text-gray-400 pointer-events-none flex items-center space-x-2">
+          <span id="render-mode-tag" class="font-mono text-blue-400">2D Canvas</span>
+          <span>•</span>
+          <span>ドラッグ/ホイールで操作可能</span>
+        </div>
+      </div>
+
+      <!-- Right Info Panel -->
+      <aside class="w-80 bg-gray-900 border-l border-gray-800 p-5 flex flex-col space-y-5 overflow-y-auto shrink-0 shadow-lg">
+        
+        <!-- Current State Info -->
+        <div class="bg-gray-800/60 border border-gray-800 rounded-lg p-4 space-y-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400">現在のステータス</h3>
+          
+          <div class="grid grid-cols-2 gap-2 text-sm">
+            <div class="bg-gray-900/80 p-2 rounded border border-gray-800">
+              <span class="text-xs text-gray-500 block">タイル数 (ステップ)</span>
+              <span id="info-tiles-count" class="text-lg font-bold text-white">1</span>
+            </div>
+            <div class="bg-gray-900/80 p-2 rounded border border-gray-800">
+              <span class="text-xs text-gray-500 block">これまで遭遇</span>
+              <span id="info-visited-count" class="text-lg font-bold text-green-400">0 回</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Probability Calculations -->
+        <div class="bg-gray-800/60 border border-gray-800 rounded-lg p-4 space-y-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400">現在の図形の累積確率</h3>
+
+          <div class="space-y-2 text-xs font-mono">
+            <div class="bg-gray-900/80 p-2 rounded border border-gray-800">
+              <span class="text-gray-500 text-[10px] block font-sans">1) 小数1位 (パーセント)</span>
+              <span id="prob-p1" class="text-base font-bold text-amber-400">100.0%</span>
+            </div>
+
+            <div class="bg-gray-900/80 p-2 rounded border border-gray-800">
+              <span class="text-gray-500 text-[10px] block font-sans">2) 分数</span>
+              <span id="prob-frac" class="text-sm font-semibold text-blue-300 break-all">1/1</span>
+            </div>
+
+            <div class="bg-gray-900/80 p-2 rounded border border-gray-800">
+              <span class="text-gray-500 text-[10px] block font-sans">3) 小数点10位</span>
+              <span id="prob-p10" class="text-xs font-semibold text-emerald-400 break-all">1.0000000000</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Next Branch Possibilities -->
+        <div class="bg-gray-800/60 border border-gray-800 rounded-lg p-4 space-y-3 flex-1 flex flex-col min-h-0">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-blue-400">次の分岐選択肢 (同型統合済み)</h3>
+            <span id="branch-count" class="text-xs font-mono bg-blue-900/50 text-blue-300 px-2 py-0.5 rounded border border-blue-700/50">0 分岐</span>
+          </div>
+
+          <div id="branch-list-container" class="flex-1 overflow-y-auto space-y-2 pr-1">
+            <!-- Branch items dynamically populated -->
+          </div>
+        </div>
+
+      </aside>
+    </div>
+
+    <!-- TAB 2: COLLECTION -->
+    <div id="tab-col" class="hidden w-full h-full bg-gray-950 p-6 flex-col overflow-y-auto">
+      <div class="flex flex-col md:flex-row md:items-center justify-between mb-6 pb-4 border-b border-gray-800 gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-white">発見された図形コレクション</h2>
+          <p class="text-xs text-gray-400 mt-1">シミュレーション中に生成された固有のパターンと同型判定結果一覧</p>
+        </div>
+        <div class="flex items-center space-x-3">
+          <!-- Collection Filter by Mode -->
+          <select id="col-filter-mode" onchange="renderCollectionTab()" class="bg-gray-900 text-gray-200 border border-gray-800 text-xs rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <option value="all">すべてのモード</option>
+            <option value="m1">モード1: 全同一</option>
+            <option value="m2">モード2: 鏡合わせ別</option>
+            <option value="m3">モード3: 鏡/回転あり別</option>
+            <option value="m4">モード4: 全て別</option>
+          </select>
+          <div class="text-xs bg-gray-900 text-gray-300 border border-gray-800 px-4 py-2 rounded-lg whitespace-nowrap">
+            表示種類数: <span id="col-total-types" class="text-blue-400 font-bold">0</span> 種類
+          </div>
+        </div>
+      </div>
+
+      <!-- Collection Grid -->
+      <div id="collection-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        <!-- Collection Cards injected here -->
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    /* ==========================================================================
+       1. EXACT FRACTION & HIGH PRECISION MATH
+       ========================================================================== */
+    function gcdBigInt(a, b) {
+      a = a < 0n ? -a : a;
+      b = b < 0n ? -b : b;
+      while (b > 0n) {
+        let t = b;
+        b = a % b;
+        a = t;
+      }
+      return a;
+    }
+
+    class Fraction {
+      constructor(num, den = 1n) {
+        this.num = BigInt(num);
+        this.den = BigInt(den);
+        if (this.den === 0n) throw new Error("Zero denominator");
+        this.reduce();
+      }
+
+      reduce() {
+        if (this.den < 0n) {
+          this.num = -this.num;
+          this.den = -this.den;
+        }
+        const g = gcdBigInt(this.num, this.den);
+        if (g > 1n) {
+          this.num /= g;
+          this.den /= g;
+        }
+      }
+
+      add(other) {
+        return new Fraction(
+          this.num * other.den + other.num * this.den,
+          this.den * other.den
+        );
+      }
+
+      mul(other) {
+        return new Fraction(this.num * other.num, this.den * other.den);
+      }
+
+      toString() {
+        return `${this.num}/${this.den}`;
+      }
+
+      toPercent1() {
+        if (this.den === 0n) return "0.0%";
+        let p = (this.num * 1000n) / this.den;
+        let rem = (this.num * 1000n) % this.den;
+        if (rem * 2n >= this.den) p += 1n;
+        let val = Number(p) / 10;
+        return val.toFixed(1) + "%";
+      }
+
+      toDecimalString10() {
+        let n = this.num;
+        let d = this.den;
+        let intPart = n / d;
+        let rem = n % d;
+        if (rem < 0n) rem = -rem;
+
+        let str = intPart.toString() + ".";
+        for (let i = 0; i < 10; i++) {
+          rem *= 10n;
+          str += (rem / d).toString();
+          rem %= d;
+        }
+        return str;
+      }
+    }
+
+    /* ==========================================================================
+       2. SIMULATION STATE & GLOBAL VARS
+       ========================================================================== */
+    let timerId = null;
+    let isRunning = false;
+    let stepIntervalSec = 1.0;
+    
+    let currentShape = [{ x: 0, y: 0, z: 0 }];
+    let currentProb = new Fraction(1, 1);
+    let collectionMap = new Map();
+
+    /* ==========================================================================
+       3. SIMULATION CONTROL & ENGINE
+       ========================================================================== */
+    function onSettingChanged() {
+      resetSim();
+    }
+
+    function onIntervalChanged(val) {
+      stepIntervalSec = parseFloat(val);
+      document.getElementById('interval-val-label').innerText = stepIntervalSec.toFixed(1) + 's';
+      if (!isRunning) {
+        document.getElementById('label-start').innerText = `スタート (${stepIntervalSec.toFixed(1)}秒ごと)`;
+      } else {
+        clearInterval(timerId);
+        timerId = setInterval(() => { stepOnce(); }, stepIntervalSec * 1000);
+      }
+    }
+
+    function toggleStart() {
+      if (isRunning) {
+        stopSim();
+      } else {
+        startSim();
+      }
+    }
+
+    function startSim() {
+      if (isRunning) return;
+      
+      resetCurrentFigure();
+
+      isRunning = true;
+      document.getElementById('label-start').innerText = 'ストップ';
+      document.getElementById('btn-start').className = "w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg shadow-md transition duration-150 flex items-center justify-center space-x-2";
+      document.getElementById('icon-play').innerHTML = '<path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 01-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 002 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path>';
+
+      timerId = setInterval(() => {
+        stepOnce();
+      }, stepIntervalSec * 1000);
+    }
+
+    function stopSim() {
+      isRunning = false;
+      if (timerId) clearInterval(timerId);
+      timerId = null;
+
+      document.getElementById('label-start').innerText = `スタート (${stepIntervalSec.toFixed(1)}秒ごと)`;
+      document.getElementById('btn-start').className = "w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg shadow-md transition duration-150 flex items-center justify-center space-x-2";
+      document.getElementById('icon-play').innerHTML = '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path>';
+    }
+
+    function resetCurrentFigure() {
+      currentShape = [{ x: 0, y: 0, z: 0 }];
+      currentProb = new Fraction(1, 1);
+
+      const type = document.getElementById('tile-type').value;
+      const is3D = is3DTileType(type);
+      document.getElementById('canvas-2d').style.display = is3D ? 'none' : 'block';
+      document.getElementById('container-3d').style.display = is3D ? 'block' : 'none';
+      document.getElementById('render-mode-tag').innerText = is3D ? '3D Three.js' : '2D Canvas';
+
+      recordCurrentShapeInCollection();
+      updateInfoPanel();
+      renderView();
+    }
+
+    function resetSim() {
+      stopSim();
+      resetCurrentFigure();
+    }
+
+    function is3DTileType(type) {
+      return type === 'tetra' || type === 'cube' || type === 'cube-diag' || type === 'cube-diag-ud';
+    }
+
+    function recordCurrentShapeInCollection() {
+      const type = document.getElementById('tile-type').value;
+      const mode = document.getElementById('mode-type').value;
+      const canonicalKey = getCanonicalKey(currentShape, type, mode);
+
+      if (!collectionMap.has(canonicalKey)) {
+        collectionMap.set(canonicalKey, {
+          key: canonicalKey,
+          shape: JSON.parse(JSON.stringify(currentShape)),
+          count: 1,
+          prob: currentProb,
+          type: type,
+          mode: mode
+        });
+      } else {
+        const item = collectionMap.get(canonicalKey);
+        item.count++;
+        item.prob = currentProb;
+      }
+
+      document.getElementById('col-count-badge').innerText = collectionMap.size;
+    }
+
+    function stepOnce() {
+      const maxSteps = parseInt(document.getElementById('max-steps').value) || 10;
+      if (currentShape.length >= maxSteps) {
+        stopSim();
+        return;
+      }
+
+      const groupedBranches = getGroupedBranches();
+      if (groupedBranches.length === 0) {
+        stopSim();
+        return;
+      }
+
+      let totalWeight = 0;
+      groupedBranches.forEach(b => { totalWeight += b.candidateCount; });
+
+      let rand = Math.floor(Math.random() * totalWeight);
+      let cumulative = 0;
+      let chosenBranch = groupedBranches[0];
+
+      for (let b of groupedBranches) {
+        cumulative += b.candidateCount;
+        if (rand < cumulative) {
+          chosenBranch = b;
+          break;
+        }
+      }
+
+      currentShape = chosenBranch.shape;
+      currentProb = currentProb.mul(chosenBranch.prob);
+
+      recordCurrentShapeInCollection();
+      updateInfoPanel();
+      renderView();
+    }
+
+    function getGroupedBranches() {
+      const type = document.getElementById('tile-type').value;
+      const mode = document.getElementById('mode-type').value;
+      const attachLatestOnly = document.getElementById('attach-latest-only').checked;
+
+      let targetTiles = attachLatestOnly ? [currentShape[currentShape.length - 1]] : currentShape;
+      let occupiedSet = new Set(currentShape.map(p => `${p.x},${p.y},${p.z}`));
+      let nextCandidatePoints = [];
+      let nextCandidateSet = new Set();
+
+      targetTiles.forEach(tile => {
+        let neighbors = getTileNeighbors(tile, type);
+        neighbors.forEach(n => {
+          let key = `${n.x},${n.y},${n.z}`;
+          if (!occupiedSet.has(key) && !nextCandidateSet.has(key)) {
+            nextCandidateSet.add(key);
+            nextCandidatePoints.push(n);
+          }
+        });
+      });
+
+      if (nextCandidatePoints.length === 0) return [];
+
+      const singleProb = new Fraction(1, nextCandidatePoints.length);
+      let branchGroupsMap = new Map();
+
+      nextCandidatePoints.forEach(pt => {
+        let newShape = [...currentShape, pt];
+        let cKey = getCanonicalKey(newShape, type, mode);
+
+        if (!branchGroupsMap.has(cKey)) {
+          branchGroupsMap.set(cKey, {
+            canonicalKey: cKey,
+            shape: newShape,
+            addedPoint: pt,
+            candidateCount: 1,
+            prob: singleProb
+          });
+        } else {
+          let g = branchGroupsMap.get(cKey);
+          g.candidateCount++;
+          g.prob = g.prob.add(singleProb);
+        }
+      });
+
+      return Array.from(branchGroupsMap.values());
+    }
+
+    function getTileNeighbors(pt, type) {
+      let { x, y, z } = pt;
+      let neighbors = [];
+
+      if (type === 'square') {
+        return [{x:x+1,y,z}, {x:x-1,y,z}, {x,y:y+1,z}, {x,y:y-1,z}];
+      } else if (type === 'square-diag') {
+        for (let dx=-1; dx<=1; dx++) {
+          for (let dy=-1; dy<=1; dy++) {
+            if (dx===0 && dy===0) continue;
+            neighbors.push({x:x+dx, y:y+dy, z});
+          }
+        }
+        return neighbors;
+      } else if (type === 'hex') {
+        return [
+          {x:x+1, y, z}, {x:x-1, y, z},
+          {x, y:y+1, z}, {x, y:y-1, z},
+          {x:x+1, y:y-1, z}, {x:x-1, y:y+1, z}
+        ];
+      } else if (type === 'tri') {
+        if ((Math.abs(x + y)) % 2 === 0) {
+          return [{x:x+1, y, z}, {x:x-1, y, z}, {x, y:y+1, z}];
+        } else {
+          return [{x:x+1, y, z}, {x:x-1, y, z}, {x, y:y-1, z}];
+        }
+      } else if (type === 'cube') {
+        return [
+          {x:x+1,y,z}, {x:x-1,y,z},
+          {x,y:y+1,z}, {x,y:y-1,z},
+          {x,y,z:z+1}, {x,y,z:z-1}
+        ];
+      } else if (type === 'cube-diag') {
+        for (let dx=-1; dx<=1; dx++)
+          for (let dy=-1; dy<=1; dy++)
+            for (let dz=-1; dz<=1; dz++) {
+              if (dx===0 && dy===0 && dz===0) continue;
+              neighbors.push({x:x+dx, y:y+dy, z:z+dz});
+            }
+        return neighbors;
+      } else if (type === 'cube-diag-ud') {
+        return [
+          {x:x+1,y,z}, {x:x-1,y,z}, {x,y:y+1,z}, {x,y:y-1,z}, {x,y,z:z+1}, {x,y,z:z-1},
+          {x:x+1,y,z:z+1}, {x:-1+x,y,z:z+1}, {x,y:y+1,z:z+1}, {x,y:y-1,z:z+1},
+          {x:x+1,y,z:z-1}, {x:-1+x,y,z:z-1}, {x,y:y+1,z:z-1}, {x,y:y-1,z:z-1}
+        ];
+      } else if (type === 'tetra') {
+        return [
+          {x:x+1,y,z}, {x:x-1,y,z}, {x,y:y+1,z}, {x,y:y-1,z},
+          {x:x+1,y:y+1,z}, {x:x-1,y:y-1,z}, {x,y,z:z+1}, {x,y,z:z-1}
+        ];
+      }
+      return [];
+    }
+
+    function getCanonicalKey(shape, type, mode) {
+      if (mode === 'm4') {
+        return shape.map(p => `${p.x},${p.y},${p.z}`).join(';');
+      }
+
+      const is3D = is3DTileType(type);
+      let transforms = is3D ? get3DTransforms(mode) : get2DTransforms(mode);
+      let candidates = [];
+
+      transforms.forEach(tr => {
+        let transformed = shape.map(p => tr(p));
+        let minX = Math.min(...transformed.map(p => p.x));
+        let minY = Math.min(...transformed.map(p => p.y));
+        let minZ = Math.min(...transformed.map(p => p.z));
+
+        let normalized = transformed.map(p => ({
+          x: p.x - minX,
+          y: p.y - minY,
+          z: p.z - minZ
+        }));
+
+        normalized.sort((a, b) => (a.x - b.x) || (a.y - b.y) || (a.z - b.z));
+        let key = normalized.map(p => `${p.x},${p.y},${p.z}`).join(';');
+        candidates.push(key);
+      });
+
+      candidates.sort();
+      return candidates[0];
+    }
+
+    function get2DTransforms(mode) {
+      const rots = [
+        p => ({ x: p.x, y: p.y, z: 0 }),
+        p => ({ x: -p.y, y: p.x, z: 0 }),
+        p => ({ x: -p.x, y: -p.y, z: 0 }),
+        p => ({ x: p.y, y: -p.x, z: 0 })
+      ];
+
+      if (mode === 'm3') return [rots[0]];
+      if (mode === 'm2') return rots;
+
+      let res = [...rots];
+      rots.forEach(r => {
+        res.push(p => r({ x: -p.x, y: p.y, z: 0 }));
+      });
+      return res;
+    }
+
+    function get3DTransforms(mode) {
+      const base = [
+        p => ({ x: p.x, y: p.y, z: p.z }),
+        p => ({ x: -p.x, y: p.y, z: p.z }),
+        p => ({ x: p.x, y: -p.y, z: p.z }),
+        p => ({ x: p.x, y: p.y, z: -p.z })
+      ];
+      if (mode === 'm3') return [base[0]];
+      return base;
+    }
+
+    function updateInfoPanel() {
+      document.getElementById('info-tiles-count').innerText = currentShape.length;
+
+      const type = document.getElementById('tile-type').value;
+      const mode = document.getElementById('mode-type').value;
+      const cKey = getCanonicalKey(currentShape, type, mode);
+      const visitedCount = collectionMap.has(cKey) ? collectionMap.get(cKey).count : 0;
+
+      document.getElementById('info-visited-count').innerText = `${visitedCount} 回`;
+
+      document.getElementById('prob-p1').innerText = currentProb.toPercent1();
+      document.getElementById('prob-frac').innerText = currentProb.toString();
+      document.getElementById('prob-p10').innerText = currentProb.toDecimalString10();
+
+      renderBranchList();
+    }
+
+    function renderBranchList() {
+      const container = document.getElementById('branch-list-container');
+      container.innerHTML = '';
+
+      const branches = getGroupedBranches();
+      document.getElementById('branch-count').innerText = `${branches.length} 分岐`;
+
+      if (branches.length === 0) {
+        container.innerHTML = '<div class="text-xs text-gray-500 text-center py-4">分岐可能エリアなし</div>';
+        return;
+      }
+
+      const type = document.getElementById('tile-type').value;
+
+      branches.forEach((b) => {
+        const item = document.createElement('div');
+        item.className = "bg-gray-900/90 border border-gray-800 rounded-lg p-2 flex items-center justify-between gap-3 hover:border-gray-700 transition duration-150";
+
+        const leftCol = document.createElement('div');
+        leftCol.className = "flex items-center space-x-2";
+
+        const miniCanvas = document.createElement('canvas');
+        miniCanvas.width = 44;
+        miniCanvas.height = 44;
+        miniCanvas.className = "bg-gray-950 border border-gray-800 rounded shrink-0";
+        drawMiniature(miniCanvas, b.shape, type);
+
+        const countInfo = document.createElement('div');
+        countInfo.className = "text-[11px] text-gray-400";
+        countInfo.innerHTML = `<span class="text-white font-semibold">${b.candidateCount}箇所</span> の位置で<br>この形になります`;
+
+        leftCol.appendChild(miniCanvas);
+        leftCol.appendChild(countInfo);
+
+        const rightCol = document.createElement('div');
+        rightCol.className = "text-right font-mono text-xs shrink-0";
+        rightCol.innerHTML = `
+          <div class="text-amber-400 font-bold text-sm">${b.prob.toPercent1()}</div>
+          <div class="text-blue-300 text-[11px]">${b.prob.toString()}</div>
+        `;
+
+        item.appendChild(leftCol);
+        item.appendChild(rightCol);
+        container.appendChild(item);
+      });
+    }
+
+    /* ==========================================================================
+       4. NAVIGATION & TAB SWITCHING
+       ========================================================================== */
+    function switchTab(tab) {
+      const btnSim = document.getElementById('tab-btn-sim');
+      const btnCol = document.getElementById('tab-btn-col');
+      const tabSim = document.getElementById('tab-sim');
+      const tabCol = document.getElementById('tab-col');
+
+      if (tab === 'sim') {
+        btnSim.className = "px-5 py-2 text-sm font-semibold rounded-md transition-all duration-200 bg-blue-600 text-white shadow";
+        btnCol.className = "px-5 py-2 text-sm font-semibold rounded-md transition-all duration-200 text-gray-400 hover:text-white";
+        tabSim.classList.remove('hidden');
+        tabCol.classList.add('hidden');
+      } else {
+        btnCol.className = "px-5 py-2 text-sm font-semibold rounded-md transition-all duration-200 bg-blue-600 text-white shadow";
+        btnSim.className = "px-5 py-2 text-sm font-semibold rounded-md transition-all duration-200 text-gray-400 hover:text-white";
+        tabCol.classList.remove('hidden');
+        tabSim.classList.add('hidden');
+        renderCollectionTab();
+      }
+    }
+
+    function clearCollection() {
+      if (confirm("これまでのコレクション記録を初期化しますか？")) {
+        collectionMap.clear();
+        document.getElementById('col-count-badge').innerText = '0';
+        updateInfoPanel();
+        renderCollectionTab();
+      }
+    }
+
+    /* ==========================================================================
+       5. RENDERING CANVAS & THREE.JS
+       ========================================================================== */
+    let cam2D = { x: 0, y: 0, zoom: 1 };
+    let isDragging2D = false;
+    let dragStart2D = { x: 0, y: 0 };
+
+    function renderView() {
+      const type = document.getElementById('tile-type').value;
+      if (is3DTileType(type)) {
+        render3D();
+      } else {
+        render2D();
+      }
+    }
+
+    function render2D() {
+      const canvas = document.getElementById('canvas-2d');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width = canvas.clientWidth;
+      const h = canvas.height = canvas.clientHeight;
+
+      ctx.clearRect(0, 0, w, h);
+      const type = document.getElementById('tile-type').value;
+
+      let size = 32 * cam2D.zoom;
+      let cx = w / 2 + cam2D.x;
+      let cy = h / 2 + cam2D.y;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      currentShape.forEach((p, idx) => {
+        ctx.fillStyle = idx === currentShape.length - 1 ? '#ef4444' : '#3b82f6';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+
+        if (type.startsWith('square')) {
+          ctx.fillRect(p.x * size - size / 2, p.y * size - size / 2, size, size);
+          ctx.strokeRect(p.x * size - size / 2, p.y * size - size / 2, size, size);
+        } else if (type === 'hex') {
+          let px = size * (Math.sqrt(3) * p.x + (Math.sqrt(3) / 2) * p.y);
+          let py = size * ((3 / 2) * p.y);
+          drawPolygon2D(ctx, px, py, size / Math.sqrt(3), 6);
+        } else if (type === 'tri') {
+          let px = p.x * size * 0.6;
+          let py = p.y * size * 0.9;
+          let inverted = (Math.abs(p.x + p.y) % 2 !== 0);
+          drawTriangle2D(ctx, px, py, size, inverted);
+        }
+      });
+
+      ctx.restore();
+    }
+
+    function drawPolygon2D(ctx, x, y, radius, sides) {
+      ctx.beginPath();
+      for (let i = 0; i < sides; i++) {
+        let angle = (i * 2 * Math.PI / sides) + Math.PI / 6;
+        let px = x + radius * Math.cos(angle);
+        let py = y + radius * Math.sin(angle);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    function drawTriangle2D(ctx, x, y, size, inverted) {
+      let h = size * 0.866;
+      ctx.beginPath();
+      if (!inverted) {
+        ctx.moveTo(x, y - h / 2);
+        ctx.lineTo(x - size / 2, y + h / 2);
+        ctx.lineTo(x + size / 2, y + h / 2);
+      } else {
+        ctx.moveTo(x, y + h / 2);
+        ctx.lineTo(x - size / 2, y - h / 2);
+        ctx.lineTo(x + size / 2, y - h / 2);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Three.js 3D View Initialization
+    let scene3D, camera3D, renderer3D, group3D, controls3D;
+
+    function init3D() {
+      const container = document.getElementById('container-3d');
+      scene3D = new THREE.Scene();
+      scene3D.background = new THREE.Color(0x030712);
+
+      camera3D = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+      camera3D.position.set(8, 8, 12);
+
+      renderer3D = new THREE.WebGLRenderer({ antialias: true });
+      renderer3D.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer3D.domElement);
+
+      if (typeof THREE.OrbitControls !== 'undefined') {
+        controls3D = new THREE.OrbitControls(camera3D, renderer3D.domElement);
+        controls3D.enableDamping = true;
+      }
+
+      const light1 = new THREE.DirectionalLight(0xffffff, 1.0);
+      light1.position.set(10, 20, 15);
+      scene3D.add(light1);
+
+      const light2 = new THREE.AmbientLight(0x404040, 1.5);
+      scene3D.add(light2);
+
+      group3D = new THREE.Group();
+      scene3D.add(group3D);
+
+      window.addEventListener('resize', () => {
+        if (!container) return;
+        camera3D.aspect = container.clientWidth / container.clientHeight;
+        camera3D.updateProjectionMatrix();
+        renderer3D.setSize(container.clientWidth, container.clientHeight);
+      });
+    }
+
+    function render3D() {
+      if (!scene3D) init3D();
+
+      while (group3D.children.length > 0) {
+        group3D.remove(group3D.children[0]);
+      }
+
+      const geometry = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+
+      currentShape.forEach((p, idx) => {
+        const material = new THREE.MeshStandardMaterial({
+          color: idx === currentShape.length - 1 ? 0xef4444 : 0x3b82f6,
+          roughness: 0.3,
+          metalness: 0.1
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(p.x, p.y, p.z);
+        group3D.add(mesh);
+      });
+
+      renderer3D.render(scene3D, camera3D);
+    }
+
+    // 2D Controls
+    const canvas2D = document.getElementById('canvas-2d');
+    canvas2D.addEventListener('mousedown', e => {
+      isDragging2D = true;
+      dragStart2D = { x: e.clientX - cam2D.x, y: e.clientY - cam2D.y };
+    });
+    window.addEventListener('mousemove', e => {
+      if (!isDragging2D) return;
+      cam2D.x = e.clientX - dragStart2D.x;
+      cam2D.y = e.clientY - dragStart2D.y;
+      render2D();
+    });
+    window.addEventListener('mouseup', () => { isDragging2D = false; });
+    canvas2D.addEventListener('wheel', e => {
+      e.preventDefault();
+      cam2D.zoom *= e.deltaY < 0 ? 1.1 : 0.9;
+      cam2D.zoom = Math.max(0.2, Math.min(5, cam2D.zoom));
+      render2D();
+    });
+
+    window.onload = function() {
+      init3D();
+      resetSim();
+    };
+
+    /* ==========================================================================
+       6. COLLECTION GALLERY TAB RENDER
+       ========================================================================== */
+    function renderCollectionTab() {
+      const container = document.getElementById('collection-grid');
+      container.innerHTML = '';
+
+      const selectedFilterMode = document.getElementById('col-filter-mode') ? document.getElementById('col-filter-mode').value : 'all';
+
+      const filteredEntries = Array.from(collectionMap.values()).filter(entry => {
+        if (selectedFilterMode === 'all') return true;
+        return entry.mode === selectedFilterMode;
+      });
+
+      document.getElementById('col-total-types').innerText = filteredEntries.length;
+
+      if (filteredEntries.length === 0) {
+        container.innerHTML = '<div class="col-span-full text-center py-12 text-gray-500">該当する条件の図形がまだ発見されていません。</div>';
+        return;
+      }
+
+      filteredEntries.forEach((entry) => {
+        const card = document.createElement('div');
+        card.className = "bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col space-y-3 shadow-lg hover:border-gray-700 transition duration-150";
+
+        const modeNames = {
+          'm1': 'モード1 (全同一)',
+          'm2': 'モード2 (鏡別)',
+          'm3': 'モード3 (鏡/回転別)',
+          'm4': 'モード4 (全別)'
+        };
+
+        const cvs = document.createElement('canvas');
+        cvs.width = 160;
+        cvs.height = 160;
+        cvs.className = "w-full h-40 bg-gray-950 rounded-lg border border-gray-800/80 block";
+        drawMiniature(cvs, entry.shape, entry.type);
+
+        const info = document.createElement('div');
+        info.className = "space-y-2 text-xs";
+        info.innerHTML = `
+          <div class="flex items-center justify-between border-b border-gray-800 pb-2">
+            <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded">${modeNames[entry.mode] || entry.mode}</span>
+            <span class="text-sm font-bold text-green-400 bg-green-950/60 px-2 py-0.5 rounded border border-green-800/50">${entry.count} 回</span>
+          </div>
+
+          <div class="space-y-1 font-mono">
+            <div class="flex justify-between">
+              <span class="text-gray-500">確率 (1位):</span>
+              <span class="text-amber-400 font-bold">${entry.prob.toPercent1()}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-500">分数:</span>
+              <span class="text-blue-300 font-semibold truncate max-w-[120px]" title="${entry.prob.toString()}">${entry.prob.toString()}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-500">10位精度:</span>
+              <span class="text-emerald-400 text-[10px] truncate max-w-[120px]" title="${entry.prob.toDecimalString10()}">${entry.prob.toDecimalString10()}</span>
+            </div>
+          </div>
+        `;
+
+        card.appendChild(cvs);
+        card.appendChild(info);
+        container.appendChild(card);
+      });
+    }
+
+    function drawMiniature(cvs, shape, type) {
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width;
+      const h = cvs.height;
+      ctx.clearRect(0, 0, w, h);
+
+      let minX = Math.min(...shape.map(p => p.x));
+      let maxX = Math.max(...shape.map(p => p.x));
+      let minY = Math.min(...shape.map(p => p.y));
+      let maxY = Math.max(...shape.map(p => p.y));
+
+      let spanX = Math.max(1, maxX - minX + 1);
+      let spanY = Math.max(1, maxY - minY + 1);
+
+      let size = Math.min(w / (spanX + 2), h / (spanY + 2));
+      let centerX = (minX + maxX) / 2;
+      let centerY = (minY + maxY) / 2;
+
+      ctx.save();
+      ctx.translate(w / 2 - centerX * size, h / 2 - centerY * size);
+
+      shape.forEach((p, idx) => {
+        ctx.fillStyle = idx === shape.length - 1 ? '#ef4444' : '#3b82f6';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+
+        if (is3DTileType(type) || type.startsWith('square')) {
+          ctx.fillRect(p.x * size - size / 2, p.y * size - size / 2, size, size);
+          ctx.strokeRect(p.x * size - size / 2, p.y * size - size / 2, size, size);
+        } else if (type === 'hex') {
+          let px = size * (Math.sqrt(3) * p.x + (Math.sqrt(3) / 2) * p.y);
+          let py = size * ((3 / 2) * p.y);
+          drawPolygon2D(ctx, px, py, size / Math.sqrt(3), 6);
+        } else if (type === 'tri') {
+          let px = p.x * size * 0.6;
+          let py = p.y * size * 0.9;
+          let inverted = (Math.abs(p.x + p.y) % 2 !== 0);
+          drawTriangle2D(ctx, px, py, size, inverted);
+        }
+      });
+
+      ctx.restore();
+    }
+  </script>
+</body>
+</html>
